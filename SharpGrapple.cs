@@ -1,7 +1,9 @@
+
 using System.Drawing;
 using CounterStrikeSharp.API;
 using CounterStrikeSharp.API.Core;
 using CounterStrikeSharp.API.Core.Attributes;
+using CounterStrikeSharp.API.Modules.Cvars;
 using CounterStrikeSharp.API.Modules.Utils;
 using Vector = CounterStrikeSharp.API.Modules.Utils.Vector;
 
@@ -10,7 +12,7 @@ namespace SharpGrapple
     public class PlayerGrappleInfo
     {
         public bool IsPlayerGrappling { get; set; }
-        public string? GrappleRaycast { get; set; }
+        public Vector GrappleRaycast { get; set; }
         public bool GrappleBeamSpawned { get; set; }
         public CBeam? GrappleWire { get; set; }
     }
@@ -24,28 +26,33 @@ namespace SharpGrapple
         private Dictionary<int, PlayerGrappleInfo> playerGrapples = new Dictionary<int, PlayerGrappleInfo>();
         private Dictionary<int, CCSPlayerController> connectedPlayers = new Dictionary<int, CCSPlayerController>();
 
+        public void InitPlayer(CCSPlayerController player)
+        { 
+            if (player.IsBot || !player.IsValid)
+            {
+                return;
+            }
+            else
+            {
+                connectedPlayers[player.Slot] = player;
+                Console.WriteLine($"Added player {player.PlayerName} with UserID {player.UserId} to connectedPlayers");
+
+                // Initialize PlayerGrappleInfo for the player
+                playerGrapples[player.Slot] = new PlayerGrappleInfo(); 
+            }
+        }
         public override void Load(bool hotReload)
         {
             Console.WriteLine("[SharpGrapple] Loading...");
 
+            ConVar.Find("player_ping_token_cooldown").SetValue(0f);
+
+            if (hotReload) Utilities.GetPlayers().ForEach(InitPlayer);
+
             RegisterEventHandler<EventPlayerConnectFull>((@event, info) =>
             {
-                var player = @event.Userid;
-
-                if (player.IsBot || !player.IsValid)
-                {
-                    return HookResult.Continue;
-                }
-                else
-                {
-                    connectedPlayers[player.Slot] = player;
-                    Console.WriteLine($"Added player {player.PlayerName} with UserID {player.UserId} to connectedPlayers");
-
-                    // Initialize PlayerGrappleInfo for the player
-                    playerGrapples[player.Slot] = new PlayerGrappleInfo();
-
-                    return HookResult.Continue;
-                }
+                InitPlayer(@event.Userid);
+                return HookResult.Continue;
             });
 
             RegisterEventHandler<EventPlayerDisconnect>((@event, info) =>
@@ -70,6 +77,22 @@ namespace SharpGrapple
                 }
             });
 
+            RegisterEventHandler<EventPlayerDeath>((@event, info) =>
+            {
+                DetachGrapple(@event.Userid);
+                return HookResult.Continue;
+            });
+
+
+
+            RegisterEventHandler<EventRoundEnd>((@event, info) =>
+            {
+                Utilities.GetPlayers().ForEach((player) => {
+                    DetachGrapple(player);
+                });
+                return HookResult.Continue;
+            });
+
             RegisterEventHandler<EventPlayerPing>((@event, info) =>
             {
                 var player = @event.Userid;
@@ -80,9 +103,9 @@ namespace SharpGrapple
                 }
                 else
                 {
-                    GrappleHandler(player, $"{@event.X} {@event.Y} {@event.Z}");
-                    return HookResult.Continue;
+                    GrappleHandler(player, @event);
                 }
+                return HookResult.Continue;
             });
 
             RegisterListener<Listeners.OnTick>(() =>
@@ -92,29 +115,24 @@ namespace SharpGrapple
                     var player = playerEntry.Value;
 
                     if (player == null || !player.IsValid || player.IsBot || !player.PawnIsAlive)
-                    {
                         continue;
-                    }
 
                     if (playerGrapples.TryGetValue(player.Slot, out var grappleInfo) && grappleInfo.IsPlayerGrappling)
                     {
                         if (player == null || player.PlayerPawn == null || player.PlayerPawn.Value.CBodyComponent == null || !player.IsValid || !player.PawnIsAlive)
-                        {
                             continue;
-                        }
 
                         Vector playerPosition = player.PlayerPawn?.Value.CBodyComponent?.SceneNode?.AbsOrigin;
                         QAngle viewAngles = player.PlayerPawn.Value.EyeAngles;
 
                         if (playerPosition == null || viewAngles == null)
-                        {
                             continue;
-                        }
 
-                        Vector? grappleTarget = null;
-                        if (grappleInfo.GrappleRaycast != null)
+                        Vector grappleTarget = playerGrapples[player.Slot].GrappleRaycast;
+                        if (grappleTarget == null)
                         {
-                            grappleTarget = ParseVector(grappleInfo.GrappleRaycast);
+                            Console.WriteLine($"Skipping player {player.PlayerName} due to null grappleTarget.");
+                            continue;
                         }
 
                         if (playerGrapples[player.Slot].GrappleWire == null)
@@ -136,11 +154,6 @@ namespace SharpGrapple
                             playerGrapples[player.Slot].GrappleBeamSpawned = true;
                         }
 
-                        if (grappleTarget == null)
-                        {
-                            Console.WriteLine($"Skipping player {player.PlayerName} due to nulls.");
-                            continue;
-                        }
 
                         if (IsPlayerCloseToTarget(player, grappleTarget, playerPosition, 100))
                         {
@@ -158,7 +171,7 @@ namespace SharpGrapple
 
                         if (player == null || player.PlayerPawn == null || player.PlayerPawn.Value.CBodyComponent == null || !player.IsValid || !player.PawnIsAlive || grappleTarget == null || viewAngles == null)
                         {
-                            Console.WriteLine($"Skipping player {player.PlayerName} due to nulls.");
+                            Console.WriteLine($"Skipping player {player.PlayerName} due to other nulls");
                             continue;
                         }
 
@@ -176,50 +189,30 @@ namespace SharpGrapple
             Console.WriteLine("[SharpGrapple] Plugin Loaded");
         }
 
-        public void GrappleHandler(CCSPlayerController? player, string grappleRaycast)
+        public void GrappleHandler(CCSPlayerController? player, EventPlayerPing ping)
         {
             if (player == null) return;
 
             if (!playerGrapples.ContainsKey(player.Slot))
-            {
                 playerGrapples[player.Slot] = new PlayerGrappleInfo();
-            }
 
+
+            DetachGrapple(player);
             playerGrapples[player.Slot].IsPlayerGrappling = true;
-            playerGrapples[player.Slot].GrappleRaycast = grappleRaycast;
-        }
-
-        private static Vector ParseVector(string vectorString)
-        {
-            var values = vectorString.Split(' ');
-            if (values.Length == 3 &&
-                float.TryParse(values[0], out float x) &&
-                float.TryParse(values[1], out float y) &&
-                float.TryParse(values[2], out float z))
-            {
-                return new Vector(x, y, z);
-            }
-
-            return new Vector(0, 0, 0);
+            playerGrapples[player.Slot].GrappleRaycast = new Vector(ping.X, ping.Y, ping.Z);
         }
 
         private void PullPlayer(CCSPlayerController player, Vector grappleTarget, Vector playerPosition, QAngle viewAngles)
         {
-            if (player == null || player.PlayerPawn == null || player.PlayerPawn.Value.CBodyComponent == null || playerPosition == null || !player.IsValid || !player.PawnIsAlive)
+            if (!player.IsValid || !player.PawnIsAlive)
             {
-                Console.WriteLine("Player is null.");
+                Console.WriteLine("Invalid or dead player.");
                 return;
             }
 
             if (player.PlayerPawn.Value.CBodyComponent.SceneNode == null)
             {
                 Console.WriteLine("SceneNode is null. Skipping pull.");
-                return;
-            }
-
-            if (grappleTarget == null)
-            {
-                Console.WriteLine("Grapple target is null.");
                 return;
             }
 
@@ -277,10 +270,7 @@ namespace SharpGrapple
 
         private Vector CalculateForwardVector(Vector viewAngles)
         {
-            if (viewAngles == null)
-            {
-                return new Vector(0, 0, 0);
-            }
+            return new Vector(0, 0, 0);
 
             float pitch = viewAngles.X * (float)Math.PI / 180.0f;
             float yaw = viewAngles.Y * (float)Math.PI / 180.0f;
@@ -293,12 +283,7 @@ namespace SharpGrapple
         }
 
         private Vector CalculateRightVector(Vector viewAngles)
-        {
-            if (viewAngles == null)
-            {
-                return new Vector(0, 0, 0);
-            }
-
+        { 
             float yaw = (viewAngles.Y - 90.0f) * (float)Math.PI / 180.0f;
 
             float x = (float)Math.Cos(yaw);
@@ -311,9 +296,7 @@ namespace SharpGrapple
         private bool IsPlayerCloseToTarget(CCSPlayerController player, Vector grappleTarget, Vector playerPosition, float thresholdDistance)
         {
             if (player == null || grappleTarget == null || playerPosition == null)
-            {
                 return false;
-            }
 
             var direction = grappleTarget - playerPosition;
             var distance = direction.Length();
@@ -324,9 +307,7 @@ namespace SharpGrapple
         private void DetachGrapple(CCSPlayerController player)
         {
             if (player == null)
-            {
                 return;
-            }
 
             if (playerGrapples.TryGetValue(player.Slot, out var grappleInfo))
             {
