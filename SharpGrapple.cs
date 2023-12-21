@@ -12,7 +12,7 @@ namespace SharpGrapple
     public class PlayerGrappleInfo
     {
         public bool IsPlayerGrappling { get; set; }
-        public Vector GrappleRaycast { get; set; }
+        public Vector? GrappleRaycast { get; set; }
         public bool GrappleBeamSpawned { get; set; }
         public CBeam? GrappleWire { get; set; }
     }
@@ -45,7 +45,7 @@ namespace SharpGrapple
         {
             Console.WriteLine("[SharpGrapple] Loading...");
 
-            ConVar.Find("player_ping_token_cooldown").SetValue(0f);
+            ConVar.Find("player_ping_token_cooldown")?.SetValue(0f);
 
             if (hotReload) Utilities.GetPlayers().ForEach(InitPlayer);
 
@@ -87,9 +87,7 @@ namespace SharpGrapple
 
             RegisterEventHandler<EventRoundEnd>((@event, info) =>
             {
-                Utilities.GetPlayers().ForEach((player) => {
-                    DetachGrapple(player);
-                });
+                Utilities.GetPlayers().ForEach(DetachGrapple);
                 return HookResult.Continue;
             });
 
@@ -119,16 +117,16 @@ namespace SharpGrapple
 
                     if (playerGrapples.TryGetValue(player.Slot, out var grappleInfo) && grappleInfo.IsPlayerGrappling)
                     {
-                        if (player == null || player.PlayerPawn == null || player.PlayerPawn.Value.CBodyComponent == null || !player.IsValid || !player.PawnIsAlive)
+                        if (player == null || player.PlayerPawn == null || player.PlayerPawn?.Value?.CBodyComponent == null || !player.IsValid || !player.PawnIsAlive)
                             continue;
 
-                        Vector playerPosition = player.PlayerPawn?.Value.CBodyComponent?.SceneNode?.AbsOrigin;
-                        QAngle viewAngles = player.PlayerPawn.Value.EyeAngles;
+                        Vector? playerPosition = player.PlayerPawn?.Value.CBodyComponent?.SceneNode?.AbsOrigin;
+                        QAngle? viewAngles = player.PlayerPawn?.Value?.EyeAngles;
 
                         if (playerPosition == null || viewAngles == null)
                             continue;
 
-                        Vector grappleTarget = playerGrapples[player.Slot].GrappleRaycast;
+                        Vector? grappleTarget = playerGrapples[player.Slot].GrappleRaycast;
                         if (grappleTarget == null)
                         {
                             Console.WriteLine($"Skipping player {player.PlayerName} due to null grappleTarget.");
@@ -145,13 +143,16 @@ namespace SharpGrapple
                                 return;
                             }
 
-                            playerGrapples[player.Slot].GrappleWire.Render = Color.LimeGreen;
-                            playerGrapples[player.Slot].GrappleWire.Width = 1.5f;
-                            playerGrapples[player.Slot].GrappleWire.EndPos.X = grappleTarget.X;
-                            playerGrapples[player.Slot].GrappleWire.EndPos.Y = grappleTarget.Y;
-                            playerGrapples[player.Slot].GrappleWire.EndPos.Z = grappleTarget.Z;
-                            playerGrapples[player.Slot].GrappleWire.DispatchSpawn();
-                            playerGrapples[player.Slot].GrappleBeamSpawned = true;
+                            var grappleWire = playerGrapples[player.Slot]?.GrappleWire;
+                            if (grappleWire != null)
+                            { 
+                                grappleWire.Render = Color.LimeGreen;
+                                grappleWire.Width = 1.5f;
+                                grappleWire.EndPos.X = grappleTarget.X;
+                                grappleWire.EndPos.Y = grappleTarget.Y;
+                                grappleWire.EndPos.Z = grappleTarget.Z;
+                                grappleWire.DispatchSpawn();
+                            }
                         }
 
 
@@ -171,7 +172,7 @@ namespace SharpGrapple
 
                         if (player == null || player.PlayerPawn == null || player.PlayerPawn.Value.CBodyComponent == null || !player.IsValid || !player.PawnIsAlive || grappleTarget == null || viewAngles == null)
                         {
-                            Console.WriteLine($"Skipping player {player.PlayerName} due to other nulls");
+                            Console.WriteLine($"Skipping player {player?.PlayerName} due to other nulls");
                             continue;
                         }
 
@@ -210,7 +211,7 @@ namespace SharpGrapple
                 return;
             }
 
-            if (player.PlayerPawn.Value.CBodyComponent.SceneNode == null)
+            if (player.PlayerPawn?.Value?.CBodyComponent?.SceneNode == null)
             {
                 Console.WriteLine("SceneNode is null. Skipping pull.");
                 return;
@@ -222,7 +223,6 @@ namespace SharpGrapple
             float grappleSpeed = 500.0f;
 
             var buttons = player.Buttons;
-            if (buttons == null) return;
 
             float adjustmentFactor = 0.5f;
 
@@ -258,9 +258,10 @@ namespace SharpGrapple
                 return;
             }
 
-            if (playerGrapples[player.Slot].GrappleWire != null)
+            var grappleWire = playerGrapples[player.Slot].GrappleWire;
+            if (grappleWire != null)
             {
-                playerGrapples[player.Slot].GrappleWire.Teleport(playerPosition, new QAngle(0, 0, 0), new Vector(0, 0, 0));
+                grappleWire.Teleport(playerPosition, new QAngle(0, 0, 0), new Vector(0, 0, 0));
             }
             else
             {
@@ -272,14 +273,14 @@ namespace SharpGrapple
         {
             return new Vector(0, 0, 0);
 
-            float pitch = viewAngles.X * (float)Math.PI / 180.0f;
-            float yaw = viewAngles.Y * (float)Math.PI / 180.0f;
+            //float pitch = viewAngles.X * (float)Math.PI / 180.0f;
+            //float yaw = viewAngles.Y * (float)Math.PI / 180.0f;
 
-            float x = (float)(Math.Cos(pitch) * Math.Cos(yaw));
-            float y = (float)(Math.Cos(pitch) * Math.Sin(yaw));
-            float z = (float)(-Math.Sin(pitch));
+            //float x = (float)(Math.Cos(pitch) * Math.Cos(yaw));
+            //float y = (float)(Math.Cos(pitch) * Math.Sin(yaw));
+            //float z = (float)(-Math.Sin(pitch));
 
-            return new Vector(x, y, z);
+            //return new Vector(x, y, z);
         }
 
         private Vector CalculateRightVector(Vector viewAngles)
@@ -295,9 +296,6 @@ namespace SharpGrapple
 
         private bool IsPlayerCloseToTarget(CCSPlayerController player, Vector grappleTarget, Vector playerPosition, float thresholdDistance)
         {
-            if (player == null || grappleTarget == null || playerPosition == null)
-                return false;
-
             var direction = grappleTarget - playerPosition;
             var distance = direction.Length();
 
@@ -305,10 +303,7 @@ namespace SharpGrapple
         }
 
         private void DetachGrapple(CCSPlayerController player)
-        {
-            if (player == null)
-                return;
-
+        { 
             if (playerGrapples.TryGetValue(player.Slot, out var grappleInfo))
             {
                 grappleInfo.IsPlayerGrappling = false;
@@ -316,19 +311,14 @@ namespace SharpGrapple
 
                 if (grappleInfo.GrappleWire != null)
                 {
-                    grappleInfo.GrappleWire.Remove();
-                    grappleInfo.GrappleWire = null;
+                    grappleInfo?.GrappleWire.Remove();
+                    grappleInfo!.GrappleWire = null;
                 }
             }
         }
 
         private float CalculateAngleDifference(Vector angles1, Vector angles2)
         {
-            if (angles1 == null || angles2 == null)
-            {
-                return 0.0f;
-            }
-
             float pitchDiff = Math.Abs(angles1.X - angles2.X);
             float yawDiff = Math.Abs(angles1.Y - angles2.Y);
 
